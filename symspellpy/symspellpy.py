@@ -25,8 +25,8 @@ import string
 import sys
 import unicodedata
 import warnings
-from collections import defaultdict
-from itertools import cycle
+from collections import Counter, defaultdict
+from itertools import combinations, cycle
 from pathlib import Path
 from re import Pattern
 from typing import IO
@@ -176,19 +176,42 @@ class SymSpell(PickleMixin):
         Returns:
             ``True`` if file loaded, or ``False`` if file not found.
         """
+        words = self._words
+        below_threshold_words = self._below_threshold_words
+        create_dictionary_entry = self.create_dictionary_entry
+        maxsize = sys.maxsize
+
+        def add_words(keys: list[str]) -> None:
+            if self._count_threshold <= 1:
+                # No below threshold words are possible, so new words are added
+                # in order of first occurrence and repeats only add to counts.
+                for key, count in Counter(keys).items():
+                    if key in words:
+                        words[key] = min(words[key] + count, maxsize)
+                    else:
+                        create_dictionary_entry(key, count)
+                return
+            for key in keys:
+                # Fast path: just increment the count of a known word
+                if key in words and key not in below_threshold_words:
+                    count_previous = words[key]
+                    words[key] = (
+                        count_previous + 1 if maxsize - count_previous > 1 else maxsize
+                    )
+                else:
+                    create_dictionary_entry(key, 1)
+
         if isinstance(corpus, (Path, str)):
             corpus = Path(corpus)
             if not corpus.exists():
                 logger.error(f"Corpus not found at {corpus}.")
                 return False
-            for key in self._parse_words(
-                corpus.read_text(encoding=encoding, errors=errors)
-            ):
-                self.create_dictionary_entry(key, 1)
+            add_words(
+                self._parse_words(corpus.read_text(encoding=encoding, errors=errors))
+            )
         else:
             for line in corpus:
-                for key in self._parse_words(line):
-                    self.create_dictionary_entry(key, 1)
+                add_words(self._parse_words(line))
         return True
 
     def create_dictionary_entry(self, key: str, count: int) -> bool:
@@ -250,9 +273,9 @@ class SymSpell(PickleMixin):
             self._max_length = len(key)
 
         # create deletes
-        edits = self._edits_prefix(key)
-        for delete in edits:
-            self._deletes[delete].append(key)
+        deletes = self._deletes
+        for delete in self._edits_prefix(key):
+            deletes[delete].append(key)
         return True
 
     def delete_dictionary_entry(self, key: str) -> bool:
@@ -1048,16 +1071,20 @@ class SymSpell(PickleMixin):
         replaces + inserts replaces and inserts are expensive and language
         dependent.
         """
-        edit_distance += 1
-        if not word:
-            return delete_words
-        for i in range(current_distance, len(word)):
-            delete = word[:i] + word[i + 1 :]
-            if delete not in delete_words:
-                delete_words.add(delete)
-            # recursion, if maximum edit distance not yet reached
-            if edit_distance < self._max_dictionary_edit_distance:
-                self._edits(delete, edit_distance, delete_words, current_distance=i)
+        # Deleting n characters at or after current_distance is the same as
+        # keeping every combination of the remaining characters, so generate
+        # each delete level directly instead of recursing. At least one level is
+        # always generated, matching the original recursive implementation.
+        head = word[:current_distance]
+        tail = word[current_distance:]
+        levels = max(self._max_dictionary_edit_distance - edit_distance, 1)
+        for n_deletes in range(1, min(levels, len(tail)) + 1):
+            # map() joins each combination in C; the head is only prepended
+            # when there is one, so the common call skips the extra strings.
+            deletes = map("".join, combinations(tail, len(tail) - n_deletes))
+            if head:
+                deletes = (head + delete for delete in deletes)
+            delete_words.update(deletes)
         return delete_words
 
     def _edits_prefix(self, key: str) -> set[str]:
@@ -1152,8 +1179,6 @@ class SymSpell(PickleMixin):
         # excluding "_". Compatible with non-latin characters, does not split
         # words at apostrophes. Uses capturing groups to combine a negated set
         # with a character set.
-        matches: list[str] = WORD_PATTERN.findall(text.lower())
-        # The above regex returns ("ghi'jkl", "l") for "ghi'jkl", so we extract
-        # the first element
-        matches = [match[0] for match in matches]
-        return matches
+        # Replacing "_" with a separator lets the simpler [\w'’]+ match exactly
+        # what WORD_PATTERN matches, without capturing groups to unpack.
+        return re.findall(r"[\w'’]+", text.lower().replace("_", " "))
