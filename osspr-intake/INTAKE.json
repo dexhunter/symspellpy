@@ -1,0 +1,52 @@
+{
+  "targets": [
+    {
+      "upstream_repo": "https://github.com/mammothb/symspellpy",
+      "head_sha": "943caad2eeb5fa05573c50be43cd81cf1ffebdb0",
+      "file": "symspellpy/symspellpy.py",
+      "function": "SymSpell._edits",
+      "native_test_cmd": "pytest tests/test_symspellpy.py::TestSymSpellPy::test_load_dictionary_count tests/test_symspellpy_edge_cases.py::TestSymSpellPyEdgeCases::test_empty_string_has_all_short_deletes",
+      "bench_cmd": "PYTHONHASHSEED=0 python3 osspr-intake/harness/edits/bench.py",
+      "baseline_median_ms": 383.958,
+      "baseline_noise_pct": 1.24,
+      "tests_pass_on_baseline": true,
+      "notes": "cProfile of one pass over all 82834 terms in the bundled frequency dictionary (prefix length 7, max edit distance 2) shows SymSpell._edits at 0.689s self time out of 0.909s cumulative, across 619504 calls. Another 0.194s is set.add, which the body calls for every new delete. The time is the slice concatenation word[:i] + word[i + 1:] plus hashing that string into the delete set, then the recursive call that finishes edit distance 2. The same set of deletes can be built from one character buffer or from deletion indexes, with far fewer temporary strings. Dictionary entry_count is the number of distinct deletes these strings produce, so the set has to stay exactly the same."
+    },
+    {
+      "upstream_repo": "https://github.com/mammothb/symspellpy",
+      "head_sha": "943caad2eeb5fa05573c50be43cd81cf1ffebdb0",
+      "file": "symspellpy/editdistance.py",
+      "function": "DamerauOsa._distance_max",
+      "native_test_cmd": "pytest tests/test_editdistance.py::TestEditDistance::test_comparer_match_ref -k \"damerau_osa and not fast\"",
+      "bench_cmd": "PYTHONHASHSEED=0 python3 osspr-intake/harness/damerau_osa_distance_max/bench.py",
+      "baseline_median_ms": 524.079,
+      "baseline_noise_pct": 1.78,
+      "tests_pass_on_baseline": true,
+      "notes": "This is the pure-Python banded Damerau-OSA path that DamerauOsa.distance uses when the remaining length is greater than max_distance, which is the usual case for longer spell-check candidates. cProfile of the bench (81508 dictionary near-misses, two fixed substitutions, max distance 2, two passes) shows _distance_max as a leaf: 0.632s of 0.661s, about 96 percent, over 163016 calls. Each call discards the cost buffer the caller passed in, allocates a new Python list for the row, and walks the band with per-character indexing and a transposition check. Filling the existing buffer and doing less Python work per cell can keep the same early exit and the same integer distance."
+    },
+    {
+      "upstream_repo": "https://github.com/mammothb/symspellpy",
+      "head_sha": "943caad2eeb5fa05573c50be43cd81cf1ffebdb0",
+      "file": "symspellpy/editdistance.py",
+      "function": "DamerauOsa._distance",
+      "native_test_cmd": "pytest tests/test_editdistance.py::TestEditDistance::test_comparer_match_ref -k \"damerau_osa and not fast\"",
+      "bench_cmd": "PYTHONHASHSEED=0 python3 osspr-intake/harness/damerau_osa_distance/bench.py",
+      "baseline_median_ms": 801.122,
+      "baseline_noise_pct": 2.29,
+      "tests_pass_on_baseline": true,
+      "notes": "DamerauOsa.distance calls _distance when max_distance is at least the remaining length, which is what happens for short words. cProfile of the same dictionary near-misses with max_distance 64 shows _distance as a leaf taking 1.398s of 1.441s, about 97 percent. Each call allocates a fresh cost row with a list comprehension and then runs the full length-by-length Python loop, including the adjacent-transposition update. Reusing the row the caller already supplies, and spending less per cell, returns the same distance. The bench checksum matches DamerauOsa.distance on every pair."
+    },
+    {
+      "upstream_repo": "https://github.com/mammothb/symspellpy",
+      "head_sha": "943caad2eeb5fa05573c50be43cd81cf1ffebdb0",
+      "file": "symspellpy/editdistance.py",
+      "function": "Levenshtein._distance_max",
+      "native_test_cmd": "pytest tests/test_editdistance.py::TestEditDistance::test_comparer_match_ref -k \"levenshtein and not fast\"",
+      "bench_cmd": "PYTHONHASHSEED=0 python3 osspr-intake/harness/levenshtein_distance_max/bench.py",
+      "baseline_median_ms": 388.102,
+      "baseline_noise_pct": 2.81,
+      "tests_pass_on_baseline": true,
+      "notes": "Pure-Python banded Levenshtein, the path Levenshtein.distance uses when the remaining length is greater than max_distance. cProfile on the same 81508 dictionary near-misses at max distance 2 shows _distance_max as a leaf: 0.454s of 0.482s, about 94 percent, over 163016 calls. Every call rebuilds the cost row as a Python list and scans the band with string indexing, returning -1 once the diagonal exceeds max_distance. Writing into the supplied buffer and keeping the same band limits preserves the exact distance. LevenshteinFast is a separate optional extension and is not this function."
+    }
+  ]
+}
